@@ -27,3 +27,8 @@ dotnet NKDiscordChatWidget.dll -p 5050 -t "LONG_DISCORD_BOT_TOKEN"
 ### Test2
 
 `** nyan` ** pasu **
+
+### Test3
+** Какого чёрта **
+
+**Какого чёрта1**
