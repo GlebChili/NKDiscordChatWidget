@@ -1,43 +1,62 @@
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Net.Http;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using Newtonsoft.Json;
-using NKDiscordChatWidget.DiscordBot.Classes;
-using NKDiscordChatWidget.General;
-using NKDiscordChatWidget.WidgetServer;
+using NKDiscordChatWidget.DiscordModel;
+using NKDiscordChatWidget.Services.General;
+using NKDiscordChatWidget.Services.Services;
 
-namespace NKDiscordChatWidget.DiscordBot
+namespace NKDiscordChatWidget.BackgroundService
 {
-    public static class Bot
+    public class Bot : IHostedService
     {
-        private static ClientWebSocket wsClient;
-        private static ulong websocketSequenceId;
-        private static string sessionID;
-        private static volatile int msBetweenPing = 10000;
-        private static DateTime lastIncomingMessageTime = DateTime.MinValue;
-        private static DateTime lastIncomingPingTime = DateTime.MinValue;
+        private ClientWebSocket wsClient;
+        private ulong websocketSequenceId;
+        private string sessionID;
+        private volatile int msBetweenPing = 10000;
+        private DateTime lastIncomingMessageTime = DateTime.MinValue;
+        private DateTime lastIncomingPingTime = DateTime.MinValue;
 
-        public static ConcurrentDictionary<string, EventGuildCreate> guilds { get; } =
-            new ConcurrentDictionary<string, EventGuildCreate>();
+        private readonly ProgramOptions ProgramOptions;
+        private readonly WebsocketClientSidePool Pool;
+        private readonly DiscordRepository Repository;
 
-        public static ConcurrentDictionary<string,
-            ConcurrentDictionary<string, EventGuildCreate.EventGuildCreate_Channel>> channels { get; } =
-            new ConcurrentDictionary<string, ConcurrentDictionary<string, EventGuildCreate.EventGuildCreate_Channel>>();
-
-        public static ConcurrentDictionary<string,
-            ConcurrentDictionary<string, ConcurrentDictionary<string, EventMessageCreate>>> messages { get; } =
-            new ConcurrentDictionary<string,
-                ConcurrentDictionary<string, ConcurrentDictionary<string, EventMessageCreate>>>();
-
-        public static async Task StartTask()
+        public Bot(
+            ProgramOptions programOptions,
+            WebsocketClientSidePool pool,
+            DiscordRepository repository
+        )
         {
-            var options = NKDiscordChatWidget.General.Global.options;
+            ProgramOptions = programOptions;
+            Pool = pool;
+            Repository = repository;
+        }
+
+        #region IHostedService
+
+        private readonly CancellationTokenSource CancellationSource = new CancellationTokenSource();
+        private CancellationToken CancellationToken => CancellationSource.Token;
+        private Task MainTask;
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("ReSharper", "MethodSupportsCancellation")]
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            MainTask = Task.Run(StartTask);
+            return Task.CompletedTask;
+        }
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            CancellationSource.Cancel();
+            await MainTask;
+        }
+
+        #endregion
+
+        public async Task StartTask()
+        {
             string wsBaseUrl;
             {
                 Console.WriteLine("Load https://discordapp.com/api/gateway/bot");
@@ -49,7 +68,7 @@ namespace NKDiscordChatWidget.DiscordBot
                         using (var client = new HttpClient())
                         {
                             client.DefaultRequestHeaders.Add("Authorization",
-                                "Bot " + options.DiscordBotToken);
+                                "Bot " + ProgramOptions.DiscordBotToken);
 
                             client.DefaultRequestHeaders
                                 .Accept
@@ -90,7 +109,7 @@ namespace NKDiscordChatWidget.DiscordBot
                     using (wsClient = new ClientWebSocket())
                     {
                         var fullConnectURI = string.Format("{0}?v=6&encoding=json", wsBaseUrl);
-                        await wsClient.ConnectAsync(new Uri(fullConnectURI), Global.globalCancellationToken);
+                        await wsClient.ConnectAsync(new Uri(fullConnectURI), CancellationToken);
                         await ProcessWebSocket();
                     }
                 }
@@ -98,21 +117,21 @@ namespace NKDiscordChatWidget.DiscordBot
                 {
                     Console.Error.WriteLine(e);
                 }
-            } while (!Global.globalCancellationToken.IsCancellationRequested);
+            } while (!CancellationToken.IsCancellationRequested);
         }
 
-        private static async Task SendMessageToWebSocket(object data)
+        private async Task SendMessageToWebSocket(object data)
         {
             await SendMessageToWebSocket(JsonConvert.SerializeObject(data));
         }
 
-        private static async Task SendMessageToWebSocket(string message)
+        private async Task SendMessageToWebSocket(string message)
         {
-            ArraySegment<byte> bytesToSend = new ArraySegment<byte>(Encoding.UTF8.GetBytes(message));
+            var bytesToSend = new ArraySegment<byte>(Encoding.UTF8.GetBytes(message));
             await wsClient.SendAsync(bytesToSend, WebSocketMessageType.Text, true, CancellationToken.None);
         }
 
-        private static async Task ProcessWebSocket()
+        private async Task ProcessWebSocket()
         {
             byte[] b = new byte[10 * 1024 * 1024];
             do
@@ -123,25 +142,38 @@ namespace NKDiscordChatWidget.DiscordBot
                     break;
                 }
 
-                ArraySegment<byte> bytesReceived = new ArraySegment<byte>(b);
-                WebSocketReceiveResult result = await wsClient.ReceiveAsync(bytesReceived, CancellationToken.None);
+                var bytesReceived = new ArraySegment<byte>(b);
+                WebSocketReceiveResult result;
+                try
+                {
+                    result = await wsClient.ReceiveAsync(bytesReceived, CancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    if (CancellationToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
 
-                if (result.Count > 0)
+                    throw;
+                }
+
+                if (result.Count == 0)
                 {
-                    var dest = new byte[result.Count];
-                    Array.Copy(b, dest, result.Count);
-                    var s = Encoding.UTF8.GetString(dest);
-                    var message = JsonConvert.DeserializeObject<DiscordWebSocketMessage>(s);
-                    lastIncomingMessageTime = DateTime.Now.ToUniversalTime();
+                    // ReSharper disable once MethodSupportsCancellation
+                    await Task.Delay(100);
+                    continue;
+                }
+
+                var dest = new byte[result.Count];
+                Array.Copy(b, dest, result.Count);
+                var s = Encoding.UTF8.GetString(dest);
+                var message = JsonConvert.DeserializeObject<DiscordWebSocketMessage>(s);
+                lastIncomingMessageTime = DateTime.Now.ToUniversalTime();
 #pragma warning disable 4014
-                    Ws_OnMessage(message);
+                Ws_OnMessage(message);
 #pragma warning restore 4014
-                }
-                else
-                {
-                    Thread.Sleep(100);
-                }
-            } while (true);
+            } while (!CancellationToken.IsCancellationRequested);
         }
 
         // ReSharper disable once ClassNeverInstantiated.Local
@@ -157,23 +189,24 @@ namespace NKDiscordChatWidget.DiscordBot
             public string dAsString => JsonConvert.SerializeObject(this.d);
         }
 
-        private static async Task heartBeat()
+        [SuppressMessage("ReSharper", "MethodSupportsCancellation")]
+        private async Task heartBeat()
         {
-            while (!Global.globalCancellationToken.IsCancellationRequested)
+            while (!CancellationToken.IsCancellationRequested)
             {
                 if (wsClient.State == WebSocketState.Open)
                 {
                     string id = string.Format("{0}\"op\": 1,\"d\": {1}{2}", '{', websocketSequenceId, '}');
                     await SendMessageToWebSocket(id);
-                    Thread.Sleep(msBetweenPing);
+                    await Task.Delay(msBetweenPing);
                     continue;
                 }
 
-                Thread.Sleep(100);
+                await Task.Delay(100);
             }
         }
 
-        private static async Task Ws_OnMessage(DiscordWebSocketMessage message)
+        private async Task Ws_OnMessage(DiscordWebSocketMessage message)
         {
             if (message.s != null)
             {
@@ -201,7 +234,7 @@ namespace NKDiscordChatWidget.DiscordBot
                             ["op"] = 2,
                             ["d"] = new Dictionary<string, object>()
                             {
-                                ["token"] = Global.options.DiscordBotToken,
+                                ["token"] = ProgramOptions.DiscordBotToken,
                                 ["session_id"] = sessionID,
                                 ["seq"] = websocketSequenceId,
                             },
@@ -214,7 +247,7 @@ namespace NKDiscordChatWidget.DiscordBot
                             ["op"] = 2,
                             ["d"] = new Dictionary<string, object>()
                             {
-                                ["token"] = Global.options.DiscordBotToken,
+                                ["token"] = ProgramOptions.DiscordBotToken,
                                 ["properties"] = new Dictionary<string, object>()
                                 {
                                     ["$os"] = System.Environment.OSVersion.ToString(),
@@ -246,16 +279,16 @@ namespace NKDiscordChatWidget.DiscordBot
                         {
                             // https://discordapp.com/developers/docs/topics/gateway#guild-create
                             var guild = JsonConvert.DeserializeObject<EventGuildCreate>(message.dAsString);
-                            guilds[guild.id] = guild;
-                            if (!channels.ContainsKey(guild.id))
+                            Repository.guilds[guild.id] = guild;
+                            if (!Repository.channels.ContainsKey(guild.id))
                             {
-                                channels[guild.id] =
+                                Repository.channels[guild.id] =
                                     new ConcurrentDictionary<string, EventGuildCreate.EventGuildCreate_Channel>();
                             }
 
                             foreach (var channel in guild.channels)
                             {
-                                channels[guild.id][channel.id] = channel;
+                                Repository.channels[guild.id][channel.id] = channel;
                             }
 
                             break;
@@ -271,21 +304,21 @@ namespace NKDiscordChatWidget.DiscordBot
                                 break;
                             }
 
-                            if (!messages.ContainsKey(messageCreate.guild_id))
+                            if (!Repository.messages.ContainsKey(messageCreate.guild_id))
                             {
-                                messages[messageCreate.guild_id] = new ConcurrentDictionary<string,
+                                Repository.messages[messageCreate.guild_id] = new ConcurrentDictionary<string,
                                     ConcurrentDictionary<string, EventMessageCreate>>();
                             }
 
-                            if (!messages[messageCreate.guild_id].ContainsKey(messageCreate.channel_id))
+                            if (!Repository.messages[messageCreate.guild_id].ContainsKey(messageCreate.channel_id))
                             {
-                                messages[messageCreate.guild_id][messageCreate.channel_id] =
+                                Repository.messages[messageCreate.guild_id][messageCreate.channel_id] =
                                     new ConcurrentDictionary<string, EventMessageCreate>();
                             }
 
-                            messages[messageCreate.guild_id][messageCreate.channel_id][messageCreate.id] =
+                            Repository.messages[messageCreate.guild_id][messageCreate.channel_id][messageCreate.id] =
                                 messageCreate;
-                            WebsocketClientSide.UpdateMessage(messageCreate);
+                            Pool.UpdateMessage(messageCreate);
 
                             Console.WriteLine("channel_id {0} user {1} say: {2}",
                                 messageCreate.channel_id,
@@ -300,9 +333,9 @@ namespace NKDiscordChatWidget.DiscordBot
                             // https://discordapp.com/developers/docs/resources/channel#message-object
                             var messageUpdate = JsonConvert.DeserializeObject<EventMessageCreate>(message.dAsString);
                             if (
-                                !messages.ContainsKey(messageUpdate.guild_id) ||
-                                !messages[messageUpdate.guild_id].ContainsKey(messageUpdate.channel_id) ||
-                                !messages[messageUpdate.guild_id][messageUpdate.channel_id]
+                                !Repository.messages.ContainsKey(messageUpdate.guild_id) ||
+                                !Repository.messages[messageUpdate.guild_id].ContainsKey(messageUpdate.channel_id) ||
+                                !Repository.messages[messageUpdate.guild_id][messageUpdate.channel_id]
                                     .ContainsKey(messageUpdate.id)
                             )
                             {
@@ -311,27 +344,27 @@ namespace NKDiscordChatWidget.DiscordBot
                             }
 
                             var existedMessage =
-                                messages[messageUpdate.guild_id][messageUpdate.channel_id][messageUpdate.id];
+                                Repository.messages[messageUpdate.guild_id][messageUpdate.channel_id][messageUpdate.id];
 
                             // При обновлении сообщения Дискорд пропускает контент, если контент не обновляется,
                             // поэтому тут нужен ===null предикат
-                            var fields = new[]{"content", "embeds", "attachments", "mention_roles", "mentions"};
+                            var fields = new[] { "content", "embeds", "attachments", "mention_roles", "mentions" };
                             foreach (var fieldName in fields)
                             {
                                 var field = typeof(EventMessageCreate).GetField(fieldName);
-                                var newValue =  field.GetValue(messageUpdate);
+                                var newValue = field.GetValue(messageUpdate);
                                 if (newValue == null)
                                 {
                                     continue;
                                 }
-                                
+
                                 field.SetValue(existedMessage, newValue);
                             }
 
                             existedMessage.edited_timestamp = messageUpdate.edited_timestamp;
                             existedMessage.mention_everyone = messageUpdate.mention_everyone;
                             existedMessage.pinned = messageUpdate.pinned;
-                            WebsocketClientSide.UpdateMessage(existedMessage);
+                            Pool.UpdateMessage(existedMessage);
 
                             Console.WriteLine("channel_id {0} user {1} edited: {2}",
                                 messageUpdate.channel_id,
@@ -345,13 +378,14 @@ namespace NKDiscordChatWidget.DiscordBot
                             // https://discordapp.com/developers/docs/topics/gateway#channel-create
                             var messageChannelCreate =
                                 JsonConvert.DeserializeObject<EventGuildCreate.EventChannelCreate>(message.dAsString);
-                            if (!channels.ContainsKey(messageChannelCreate.guild_id))
+                            if (!Repository.channels.ContainsKey(messageChannelCreate.guild_id))
                             {
-                                channels[messageChannelCreate.guild_id] =
+                                Repository.channels[messageChannelCreate.guild_id] =
                                     new ConcurrentDictionary<string, EventGuildCreate.EventGuildCreate_Channel>();
                             }
 
-                            channels[messageChannelCreate.guild_id][messageChannelCreate.id] = messageChannelCreate;
+                            Repository.channels[messageChannelCreate.guild_id][messageChannelCreate.id] =
+                                messageChannelCreate;
 
                             break;
                         }
@@ -361,13 +395,13 @@ namespace NKDiscordChatWidget.DiscordBot
                             var guild_id = message.d.guild_id.ToString() as string;
                             var channel_id = message.d.channel_id.ToString() as string;
                             if (
-                                messages.ContainsKey(guild_id) &&
-                                messages[guild_id].ContainsKey(channel_id)
+                                Repository.messages.ContainsKey(guild_id) &&
+                                Repository.messages[guild_id].ContainsKey(channel_id)
                             )
                             {
                                 var messageId = message.d.id.ToString() as string;
-                                messages[guild_id][channel_id].TryRemove(messageId, out _);
-                                WebsocketClientSide.RemoveMessage(guild_id, channel_id, messageId);
+                                Repository.messages[guild_id][channel_id].TryRemove(messageId, out _);
+                                Pool.RemoveMessage(guild_id, channel_id, messageId);
                             }
 
                             // Такого сообщения нет. Возможно, оно было создано раньше. Это не проблема 
@@ -378,18 +412,19 @@ namespace NKDiscordChatWidget.DiscordBot
                             // https://discordapp.com/developers/docs/topics/gateway#message-reaction-add
                             var reaction = JsonConvert.DeserializeObject<Reaction>(message.dAsString);
                             if (
-                                !messages.ContainsKey(reaction.guild_id) ||
-                                !messages[reaction.guild_id].ContainsKey(reaction.channel_id) ||
-                                !messages[reaction.guild_id][reaction.channel_id].ContainsKey(reaction.message_id)
+                                !Repository.messages.ContainsKey(reaction.guild_id) ||
+                                !Repository.messages[reaction.guild_id].ContainsKey(reaction.channel_id) ||
+                                !Repository.messages[reaction.guild_id][reaction.channel_id]
+                                    .ContainsKey(reaction.message_id)
                             )
                             {
                                 break;
                             }
 
-                            messages[reaction.guild_id][reaction.channel_id][reaction.message_id]
+                            Repository.messages[reaction.guild_id][reaction.channel_id][reaction.message_id]
                                 .AddReaction(reaction);
-                            WebsocketClientSide.UpdateMessage(
-                                messages[reaction.guild_id][reaction.channel_id][reaction.message_id]);
+                            Pool.UpdateMessage(
+                                Repository.messages[reaction.guild_id][reaction.channel_id][reaction.message_id]);
 
                             break;
                         }
@@ -398,18 +433,19 @@ namespace NKDiscordChatWidget.DiscordBot
                             // https://discordapp.com/developers/docs/topics/gateway#message-reaction-remove
                             var reaction = JsonConvert.DeserializeObject<Reaction>(message.dAsString);
                             if (
-                                !messages.ContainsKey(reaction.guild_id) ||
-                                !messages[reaction.guild_id].ContainsKey(reaction.channel_id) ||
-                                !messages[reaction.guild_id][reaction.channel_id].ContainsKey(reaction.message_id)
+                                !Repository.messages.ContainsKey(reaction.guild_id) ||
+                                !Repository.messages[reaction.guild_id].ContainsKey(reaction.channel_id) ||
+                                !Repository.messages[reaction.guild_id][reaction.channel_id]
+                                    .ContainsKey(reaction.message_id)
                             )
                             {
                                 break;
                             }
 
-                            messages[reaction.guild_id][reaction.channel_id][reaction.message_id]
+                            Repository.messages[reaction.guild_id][reaction.channel_id][reaction.message_id]
                                 .RemoveReaction(reaction);
-                            WebsocketClientSide.UpdateMessage(
-                                messages[reaction.guild_id][reaction.channel_id][reaction.message_id]);
+                            Pool.UpdateMessage(
+                                Repository.messages[reaction.guild_id][reaction.channel_id][reaction.message_id]);
 
                             break;
                         }
@@ -422,14 +458,14 @@ namespace NKDiscordChatWidget.DiscordBot
                         {
                             // https://discordapp.com/developers/docs/topics/gateway#guild-ban-add
                             var banAdd = JsonConvert.DeserializeObject<EventGuildBanAdd>(message.dAsString);
-                            if (!messages.ContainsKey(banAdd.guild_id))
+                            if (!Repository.messages.ContainsKey(banAdd.guild_id))
                             {
                                 break;
                             }
 
                             var userId = banAdd.user.id;
 
-                            foreach (var (channelId, channelsMessages) in messages[banAdd.guild_id])
+                            foreach (var (channelId, channelsMessages) in Repository.messages[banAdd.guild_id])
                             {
                                 var forDeletions = new List<string>();
                                 foreach (var (messageId, messageItem) in channelsMessages)
@@ -443,7 +479,7 @@ namespace NKDiscordChatWidget.DiscordBot
                                 foreach (var messageId in forDeletions)
                                 {
                                     channelsMessages.TryRemove(messageId, out _);
-                                    WebsocketClientSide.RemoveMessage(banAdd.guild_id, channelId, messageId);
+                                    Pool.RemoveMessage(banAdd.guild_id, channelId, messageId);
                                 }
                             }
 

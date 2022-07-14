@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
-namespace NKDiscordChatWidget.DiscordBot.Classes
+namespace NKDiscordChatWidget.DiscordModel
 {
     // ReSharper disable ClassNeverInstantiated.Global
     /// <summary>
@@ -154,7 +154,8 @@ namespace NKDiscordChatWidget.DiscordBot.Classes
                     {
                         // Нет аватарки, отображаем Дефолтную
                         // todo Найти оригинальный URL с CDN Дискорда
-                        return "https://nktkz.s3.eu-central-1.amazonaws.com/cdn/discord-widget/322c936a8c8be1b803cd94861bdfa868.png";
+                        return
+                            "https://nktkz.s3.eu-central-1.amazonaws.com/cdn/discord-widget/322c936a8c8be1b803cd94861bdfa868.png";
                     }
 
                     string extension = "png";
@@ -314,7 +315,7 @@ namespace NKDiscordChatWidget.DiscordBot.Classes
 
             public int count;
             public bool me;
-            public NKDiscordChatWidget.DiscordBot.Classes.Emoji emoji;
+            public NKDiscordChatWidget.DiscordModel.Emoji emoji;
 
             public override string ToString()
             {

@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace NKDiscordChatWidget.General
+namespace NKDiscordChatWidget.Services.Util
 {
     public static class Utf8ToUnicode
     {
@@ -127,8 +127,8 @@ namespace NKDiscordChatWidget.General
             {
                 return new[]
                 {
-                    (byte) (code & 0xFF),
-                    (byte) ((code >> 8) & 0xFF),
+                    (byte)(code & 0xFF),
+                    (byte)((code >> 8) & 0xFF),
                 };
             }
 
@@ -138,10 +138,10 @@ namespace NKDiscordChatWidget.General
 
             return new[]
             {
-                (byte) (a2 & 0xFF),
-                (byte) ((a2 >> 8) & 0xFF),
-                (byte) (a1 & 0xFF),
-                (byte) ((a1 >> 8) & 0xFF),
+                (byte)(a2 & 0xFF),
+                (byte)((a2 >> 8) & 0xFF),
+                (byte)(a1 & 0xFF),
+                (byte)((a1 >> 8) & 0xFF),
             };
         }
 

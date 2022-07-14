@@ -1,14 +1,13 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
+using System.Diagnostics.CodeAnalysis;
+using NKDiscordChatWidget.Services.General;
+using NKDiscordChatWidget.Services.Services;
 
-namespace NKDiscordChatWidget.General
+namespace NKDiscordChatWidget.BackgroundService
 {
     /// <summary>
     /// Чистка сообщений в каналах для освобождения памяти и ускорения работы
     /// </summary>
-    public static class ClearChatTimer
+    public class ClearChatTimer : IHostedService
     {
         /// <summary>
         /// Время (в секундах) между очисткой сообщений в каналах
@@ -20,19 +19,53 @@ namespace NKDiscordChatWidget.General
         /// </summary>
         public const int MaximumMessagesPerChannelCount = 40;
 
-        public static void StartTask()
+        private readonly ProgramOptions ProgramOptions;
+        private readonly DiscordRepository Repository;
+
+        public ClearChatTimer(
+            ProgramOptions programOptions,
+            DiscordRepository repository
+        )
         {
-            while (!General.Global.globalCancellationToken.IsCancellationRequested)
+            ProgramOptions = programOptions;
+            Repository = repository;
+        }
+
+        #region IHostedService
+
+        private readonly CancellationTokenSource CancellationSource = new CancellationTokenSource();
+        private CancellationToken CancellationToken => CancellationSource.Token;
+        private Task MainTask;
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("ReSharper", "MethodSupportsCancellation")]
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            MainTask = Task.Run(StartTask);
+            return Task.CompletedTask;
+        }
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            CancellationSource.Cancel();
+            await MainTask;
+        }
+
+        #endregion
+
+        [SuppressMessage("ReSharper", "MethodSupportsCancellation")]
+        public async Task StartTask()
+        {
+            while (!CancellationToken.IsCancellationRequested)
             {
                 // Ожидаем следующего раза
                 var nextTime = DateTime.Now.ToUniversalTime().Add(TimeSpan.FromSeconds(DelayBetweenClearing));
                 while ((DateTime.Now.ToUniversalTime() < nextTime) &&
-                       !General.Global.globalCancellationToken.IsCancellationRequested)
+                       !CancellationToken.IsCancellationRequested)
                 {
-                    Thread.Sleep(100);
+                    await Task.Delay(100);
                 }
 
-                if (General.Global.globalCancellationToken.IsCancellationRequested)
+                if (CancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
@@ -41,10 +74,10 @@ namespace NKDiscordChatWidget.General
             }
         }
 
-        private static void SingleIteration()
+        private void SingleIteration()
         {
             // Перебор всех гильдий (серверов) и каналов внутри них
-            foreach (var (guildID, messagesInGuild) in NKDiscordChatWidget.DiscordBot.Bot.messages)
+            foreach (var (guildID, messagesInGuild) in Repository.messages)
             {
                 foreach (var (channelID, messagesInChannel) in messagesInGuild)
                 {

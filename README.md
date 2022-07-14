@@ -1,4 +1,7 @@
 # NK Discord Chat Widget
+[![Build status](https://ci.appveyor.com/api/projects/status/pe2pjukqf3dv97rb?svg=true)](https://ci.appveyor.com/project/nokitakaze/nkdiscordchatwidget)
+[![Test status](https://img.shields.io/appveyor/tests/nokitakaze/nkdiscordchatwidget.svg)](https://ci.appveyor.com/project/nokitakaze/nkdiscordchatwidget/branch/master)
+
 Виджет (в виде HTML-страницы) для OBS и других программ для стриминга.
 
 Выкладываю временно без описания настройки.

@@ -1,17 +1,29 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Web;
-using NKDiscordChatWidget.DiscordBot.Classes;
+using NKDiscordChatWidget.DiscordModel;
+using NKDiscordChatWidget.Services.General;
+using NKDiscordChatWidget.Services.Util;
 
-namespace NKDiscordChatWidget.General
+namespace NKDiscordChatWidget.Services.Services
 {
-    public static class MessageArtist
+    public class MessageArtist
     {
-        public static AnswerMessage DrawMessage(EventMessageCreate message, ChatDrawOption chatDrawOption)
+        private readonly DiscordRepository Repository;
+        private readonly MessageMarkdownParser Parser;
+
+        public MessageArtist(DiscordRepository repository, MessageMarkdownParser parser)
+        {
+            Repository = repository;
+            Parser = parser;
+        }
+
+        public AnswerMessage DrawMessage(EventMessageCreate message, ChatDrawOption chatDrawOption)
         {
             string htmlContent = string.Format("<div class='content-message' data-id='{1}'>{0}</div>",
                 DrawMessageContent(message, chatDrawOption), message.id);
@@ -47,9 +59,9 @@ namespace NKDiscordChatWidget.General
             string nickColor = "inherit";
             if ((message.member != null) && (message.member.roles.Any()))
             {
-                var roles = NKDiscordChatWidget.DiscordBot.Bot.guilds[message.guild_id].roles.ToList();
+                var roles = Repository.guilds[message.guild_id].roles.ToList();
                 roles.Sort((a, b) => b.position.CompareTo(a.position));
-                Role role = roles.FirstOrDefault(t => message.member.roles.Contains(t.id));
+                var role = roles.FirstOrDefault(t => message.member.roles.Contains(t.id));
                 if (role != null)
                 {
                     nickColor = role.color.ToString("X");
@@ -86,14 +98,14 @@ namespace NKDiscordChatWidget.General
             return new AnswerMessage()
             {
                 id = message.id,
-                time = ((DateTimeOffset) message.timestampAsDT).ToUnixTimeMilliseconds() * 0.001d,
-                time_update = ((DateTimeOffset) timeUpdate).ToUnixTimeMilliseconds() * 0.001d,
+                time = ((DateTimeOffset)message.timestampAsDT).ToUnixTimeMilliseconds() * 0.001d,
+                time_update = ((DateTimeOffset)timeUpdate).ToUnixTimeMilliseconds() * 0.001d,
                 html = html,
                 hash = sha1hash,
             };
         }
 
-        private static string DrawMessageContent(EventMessageCreate message, ChatDrawOption chatOption)
+        private string DrawMessageContent(EventMessageCreate message, ChatDrawOption chatOption)
         {
             var usedEmbedsUrls = new HashSet<string>();
             foreach (var embed in message.embeds)
@@ -102,16 +114,16 @@ namespace NKDiscordChatWidget.General
             }
 
             var guildID = message.guild_id;
-            var guild = NKDiscordChatWidget.DiscordBot.Bot.guilds[guildID];
+            var guild = Repository.guilds[guildID];
             var thisGuildEmojis = new HashSet<string>(guild.emojis.Select(emoji => emoji.id).ToList());
 
             // Основной текст
-            string directContentHTML = NKDiscordChatWidget.General.MessageMarkdownParser.RenderMarkdownAsHTML(
+            string directContentHTML = Parser.RenderMarkdownAsHTML(
                 message.content, chatOption, message.mentions, guildID, usedEmbedsUrls);
             bool containOnlyUnicodeAndSpace;
             {
                 var rEmojiWithinText = new Regex(@"<\:(.+?)\:([0-9]+)>", RegexOptions.Compiled);
-                long[] longs = {};
+                long[] longs = { };
                 if (message.content != null)
                 {
                     longs = Utf8ToUnicode.ToUnicodeCode(rEmojiWithinText.Replace(message.content, ""));
@@ -244,9 +256,9 @@ namespace NKDiscordChatWidget.General
 
         #region Reactions
 
-        private static void AddMessageReactionHTML(
+        private void AddMessageReactionHTML(
             ICollection<string> reactionHTMLs,
-            NKDiscordChatWidget.DiscordBot.Classes.EventMessageCreate.EventMessageCreate_Reaction reaction,
+            NKDiscordChatWidget.DiscordModel.EventMessageCreate.EventMessageCreate_Reaction reaction,
             int emojiShow,
             ChatDrawOption chatOption
         )
@@ -286,8 +298,8 @@ namespace NKDiscordChatWidget.General
             }
         }
 
-        private static string AddMessageReactionHTMLWithEmojiPack(
-            NKDiscordChatWidget.DiscordBot.Classes.EventMessageCreate.EventMessageCreate_Reaction reaction,
+        private string AddMessageReactionHTMLWithEmojiPack(
+            NKDiscordChatWidget.DiscordModel.EventMessageCreate.EventMessageCreate_Reaction reaction,
             EmojiPackType emojiPack
         )
         {
@@ -336,35 +348,43 @@ namespace NKDiscordChatWidget.General
     }
 
     // ReSharper disable NotAccessedField.Global
+    // ReSharper disable AutoPropertyCanBeMadeGetOnly.Global
+    // ReSharper disable UnusedAutoPropertyAccessor.Global
+    // ReSharper disable CollectionNeverQueried.Global
     public class AnswerMessage
     {
-        public string id;
-        public double time;
-        public double time_update;
-        public string html;
+        public string id { get; set; }
+        public double time { get; set; }
+        public double time_update { get; set; }
+        public string html { get; set; }
 
         /// <summary>
         /// Уникальный хеш, взятый от HTML-контента сообщения
         /// </summary>
-        public string hash;
+        public string hash { get; set; }
     }
 
     public class AnswerFull
     {
-        public readonly List<AnswerMessage> messages = new List<AnswerMessage>();
-        public double time_answer;
-        public readonly HashSet<string> existedID = new HashSet<string>();
-        public long time_server_start;
+        public List<AnswerMessage> messages { get; } = new List<AnswerMessage>();
+        public double time_answer { get; set; }
+        public HashSet<string> existedID { get; } = new HashSet<string>();
+        public long time_server_start { get; set; }
 
         /// <summary>
         /// Заголовок для окна виджета (нужно только для дебага этого виджета)
         /// </summary>
-        public string channel_title;
+        public string channel_title { get; set; }
+
+        private static readonly long TimeStart = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         public AnswerFull()
         {
-            this.time_server_start = Global.TimeStart;
+            this.time_server_start = TimeStart;
         }
     }
+    // ReSharper restore CollectionNeverQueried.Global
+    // ReSharper restore UnusedAutoPropertyAccessor.Global
     // ReSharper restore NotAccessedField.Global
+    // ReSharper restore AutoPropertyCanBeMadeGetOnly.Global
 }

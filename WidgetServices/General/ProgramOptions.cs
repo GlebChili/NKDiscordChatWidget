@@ -2,9 +2,9 @@ using System;
 using System.IO;
 using CommandLine;
 
-namespace NKDiscordChatWidget.General
+namespace NKDiscordChatWidget.Services.General
 {
-    public class Options
+    public class ProgramOptions
     {
         [Option('t', "discord-token", Required = true, HelpText = "Discord bot token")]
         public string DiscordBotToken { get; set; }
@@ -16,7 +16,9 @@ namespace NKDiscordChatWidget.General
         {
             get
             {
-                string folder = AppDomain.CurrentDomain.BaseDirectory
+                string folder = AppDomain
+                    .CurrentDomain
+                    .BaseDirectory
                     .Replace('\\', '/')
                     .TrimEnd('/');
                 do

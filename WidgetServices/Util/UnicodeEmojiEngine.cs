@@ -4,7 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 
-namespace NKDiscordChatWidget.General
+namespace NKDiscordChatWidget.Services.Util
 {
     public static class UnicodeEmojiEngine
     {
@@ -47,7 +47,7 @@ namespace NKDiscordChatWidget.General
         public static void LoadAllEmojiPacks(string WWWRoot)
         {
             // Так делать нельзя, но если очень хочется, то можно
-            foreach (var pack in new[] {EmojiPackType.JoyPixels, EmojiPackType.Twemoji})
+            foreach (var pack in new[] { EmojiPackType.JoyPixels, EmojiPackType.Twemoji })
             {
                 var subFolder = GetImageSubFolder(pack);
                 var extension = GetImageExtension(pack);
@@ -57,17 +57,17 @@ namespace NKDiscordChatWidget.General
 
             foreach (var id in Enum.GetValues(typeof(EmojiPackType)))
             {
-                if (!emojiList.ContainsKey((EmojiPackType) id))
+                if (!emojiList.ContainsKey((EmojiPackType)id))
                 {
-                    emojiList[(EmojiPackType) id] = new string[] { };
-                    emojiCodesList[(EmojiPackType) id] = new HashSet<long>();
+                    emojiList[(EmojiPackType)id] = new string[] { };
+                    emojiCodesList[(EmojiPackType)id] = new HashSet<long>();
                     continue;
                 }
 
                 var rawList = new HashSet<long>();
-                foreach (var codeString in emojiList[(EmojiPackType) id])
+                foreach (var codeString in emojiList[(EmojiPackType)id])
                 {
-                    var a = codeString.Split("-");
+                    var a = codeString.Split('-');
                     foreach (var singleStringCode in a)
                     {
                         var code = int.Parse(singleStringCode, NumberStyles.HexNumber);
@@ -78,7 +78,7 @@ namespace NKDiscordChatWidget.General
                     }
                 }
 
-                emojiCodesList[(EmojiPackType) id] = rawList;
+                emojiCodesList[(EmojiPackType)id] = rawList;
             }
         }
 
@@ -88,9 +88,9 @@ namespace NKDiscordChatWidget.General
             // ReSharper disable once LoopCanBeConvertedToQuery
             foreach (var fileName in Directory.EnumerateFiles(folder))
             {
-                var a = fileName.Replace("\\", "/").Split("/");
+                var a = fileName.Replace("\\", "/").Split('/');
                 var filenameItself = a.Last();
-                a = filenameItself.Split(".");
+                a = filenameItself.Split('.');
 
                 var extension = a.Last();
                 if (extension != expectedExtension)
@@ -107,19 +107,21 @@ namespace NKDiscordChatWidget.General
 
         public static string GetStringForCodes(long code)
         {
-            return GetStringForCodes(new[] {code});
+            return GetStringForCodes(new[] { code });
         }
 
-        public static string GetStringForCodes(IEnumerable<long> codes)
+        public static string GetStringForCodes(ICollection<long> codes)
         {
             if (!codes.Any())
             {
                 return "";
             }
 
-            var s = codes.Aggregate("", (current, code) => current + ("-" + code.ToString("X").ToLower()));
+            var s = string
+                .Concat(codes.Select(code => "-" + code.ToString("x")))
+                .Substring(1);
 
-            return s.Substring(1);
+            return s;
         }
 
         public static bool IsInIntervalEmoji(long code, EmojiPackType pack)
@@ -157,7 +159,7 @@ namespace NKDiscordChatWidget.General
                     if (dictionary.Contains(emojiString))
                     {
                         u = true;
-                        result.Add(new EmojiRenderResult() {emojiCode = emojiString});
+                        result.Add(new EmojiRenderResult() { emojiCode = emojiString });
                         break;
                     }
                 }
